@@ -4,15 +4,21 @@ SoundFile[] sfx;
 String[] sfx_names = {"splash0", "splash1", "splash2", "splash3", "splash4", "jump", "land",
 "eat1","eat2","eat3","eat4","eat5","seed","baby","oof"};
 
-int PLAYER_COUNT = 80;
+int PLAYER_COUNT = 110;
 int DIM_COUNT = 3;
 int CENTER_X = 760; // try setting this to 760 or 761 if there is horizontal camera-pan-drifting
 color SKY_COLOR = color(150,200,255);
 KeyHandler keyHandler;
-int SIZE = 20;
 float TICKS_PER_DAY = 4500;
 boolean TRAP_MOUSE = true;
-int T = 200; // T = tile size
+
+int SIZE = 36;
+int T = 140; // T = tile size
+float COLLISION_DISTANCE = 33; // how close to creatures have to be to interact?
+int MAX_PER_TILE = 2;
+float VISION_DISTANCE = T*7.0;
+
+
 float EPS = 0.001;
 PGraphics g;
 PGraphics ui;
@@ -31,28 +37,26 @@ int ARCHIVE_EVERY = 30;
 int ARCHIVE_SIZE = 200;
 int SPECIES_COUNT = 6;
 int[] START_SPECIES = {0,0,0,0,0,0,0,1,1,1,1,1,2,2,2,3,3,4};
-int MAX_PER_TILE = 5;
 color[] SPECIES_COLORS = {color(255,100,255),color(0,255,255),color(255,200,0),color(0,160,160),color(255,0,0),color(128,128,128)};
 color WATER_COLOR = color(40,80,220);
 ArrayList<Player> players;
 ArrayList<Gut> guts;
 boolean followSpecimen = false;
-float PLANT_GROWTH_SPEED = 4.0;
 
-String[] PRIORITY_NAMES = {"Hunger", "Thirst", "Freaky", "Eepy", "Flee Monsters"};
-color[] PRIORITY_COLORS = {color(150,100,50), color(0,0,255), color(255,0,255), color(128,255,0), color(255,0,0)};
-float[] PRIORITY_CAPS = {0.0,0.0,0.2,0.6,0.0};
+String[] PRIORITY_NAMES = {"Hunger", "Thirst", "Freaky", "Eepy", "Flee Monsters", "Caretaking"};
+color[] PRIORITY_COLORS = {color(150,100,50), color(0,0,255), color(255,0,255), color(128,255,0), color(255,0,0), color(255,188,120)};
+float[] PRIORITY_CAPS = {0.0,0.0,0.2,0.6,0.0,0.0};
 
 // how quickly does each species gain urgency in doing the fundamental tasks?
 // Each row is per species
 // Each element in row is per priority
 float[][] PRIORITY_RATES = {
-{0,0,0,0,0}, // Pink flower
-{0,0,0,0,0}, // Ice flower
-{9.6, 3.3, 0.8*7.5, 0, 0}, // yellow cow
-{9.4, 3.5, 0.8*7.1, 0, 0}, // teal cow
-{9,   6.4, 0.8*5.0, 0, 0}, // red predator
-{5,   4,   0.8*4.5, 0, 0}}; // 6th species (not yet implemented)
+{3.0,0,0,0,0,0}, // Pink flower
+{2.3,0,0,0,0,0}, // Ice flower
+{13.2, 3.3, 0.8*7.5, 0, 0, -90}, // yellow cow
+{13.0, 3.5, 0.8*7.1, 0, 0, -90}, // teal cow
+{12.5,   5.0, 0.8*5.4, 0, 0, -90}, // red predator
+{9.0,   4,   0.8*4.5, 0, 0, -90}}; // 6th species (not yet implemented)
 
 boolean[][] IS_FOOD = { // can each species eat the others?
 {false,false,false,false,false,false},
@@ -67,7 +71,7 @@ float[] CALORIES_RATE = {1.35,1.35,1.00,1.00,0.80,1.0};
 
 float WATER_CALORIES = 0.40;
 float[] SPECIES_SPEED = {0.0, 0.0, 0.5, 0.52, 0.54, 1.00};
-int ACTION_COUNT = 7; // jump, WASD, turn left, turn right
+int ACTION_COUNT = 8; // jump, WASD, turn left, turn right, wander
 
 Player closest_AI;
 float[] camera = {0,0,0,0,0};
@@ -219,9 +223,36 @@ void drawUI(){
     closest_AI.trait.drawDisplay();
     ui.image(closest_AI.trait.display,0,ui_title.height);
   }
-  ui.textSize(20);
+  ui.textSize(24);
   ui.strokeWeight(3);
   ui.textAlign(LEFT);
+  
+  if(archive.size() == 0){
+    return;
+  }
+  Record archiveNow = archive.get(archive.size()-1);
+  int[] species_order = new int[SPECIES_COUNT];
+  boolean[] taken = new boolean[SPECIES_COUNT];
+  for(int s = 0; s < SPECIES_COUNT; s++){
+    taken[s] = false;
+  }
+  for(int spot = 0; spot < SPECIES_COUNT; spot++){
+    int record = -1;
+    int recordHolder = -1;
+    for(int s = 0; s < SPECIES_COUNT; s++){
+      if(taken[s]){
+        continue;
+      }
+      if(archiveNow.populations[s] > record){
+        record = archiveNow.populations[s];
+        recordHolder = s;
+      }
+    }
+    taken[recordHolder] = true;
+    species_order[spot] = recordHolder;
+  }
+  
+  float textY = 100000;
   for(int i = 0; i < archive.size()-1; i++){
     float x1 = i*340.0/(archive.size()-1);
     float x2 = (i+1)*340.0/(archive.size()-1);
@@ -229,8 +260,9 @@ void drawUI(){
     float y2 = DL_to_Y(archive.get(i+1).daylight);
     ui.stroke(128);
     ui.line(x1,y1,x2,y2);
-    
-    for(int s = 0; s < SPECIES_COUNT; s++){
+
+    for(int spot = SPECIES_COUNT-1; spot >= 0; spot--){
+      int s = species_order[spot];
       int val1 = archive.get(i).populations[s];
       int val2 = archive.get(i+1).populations[s];
       y1 = val_to_Y(val1, range);
@@ -239,7 +271,8 @@ void drawUI(){
       ui.line(x1,y1,x2,y2);
       if(i == archive.size()-2){
         ui.fill(SPECIES_COLORS[s]);
-        ui.text(""+val2,x2+4,y2+5+2*s);
+        textY = min(textY-23,y2+6);
+        ui.text(""+val2,x2+4,textY);
       }
     }
   }
@@ -342,6 +375,16 @@ float unloop(float val){
   }
   return val;
 }
+float unloop_arr(float val){
+  while(val <= 0){
+    val += SIZE*T;
+  }
+  while(val > SIZE*T){
+    val -= SIZE*T;
+  }
+  return val;
+}
+
 int unloop_int(int val, int N){
   while(val < 0){
     val += N;
@@ -369,6 +412,17 @@ float unloop_two(float val, float target){
   }
   return val;
 }
+
+boolean mapVisible(float[] coor){
+    float dist_ = d_loop(camera, coor, true);
+    if(dist_ < 3*T){
+      return true;
+    }
+    int x = (int)min(max(coor[0]/T,0),SIZE-EPS);
+    int y = (int)min(max(coor[1]/T,0),SIZE-EPS);
+    return map.visible[x][y][0];
+  }
+
 void drawVisuals(){
   clearUI();
   g.beginDraw();

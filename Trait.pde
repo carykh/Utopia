@@ -27,6 +27,7 @@ class Trait{
       priorities[1] = startingThirst;
       priorities[2] = 1; // freakiness and playtime start at their lowest.
       priorities[3] = 1;
+      priorities[5] = 1;
       display = createGraphics(400,700);
     }
     bw = startingHunger;
@@ -52,12 +53,13 @@ class Trait{
     return nf(n*100,0,1)+" lbs";
   }
   void drawDisplay(){
+    boolean[] RIGHT_SIDE = {true, true, false, false, false, false};
     int[] order = ArrayUtils.argsort(priorities, true);
     display.beginDraw();
     display.background(0);
     
     display.fill(80);
-    display.rect(8,0,384,384,25);
+    display.rect(8,0,384,420,25);
     display.fill(255);
     display.textAlign(LEFT);
     display.textSize(36);
@@ -90,7 +92,12 @@ class Trait{
       display.fill(0);
       display.rect(0,0,appW,30);
       display.fill(PRIORITY_COLORS[p]);
-      display.rect(0,0,fullW*(1-priorities[p]),30);
+      float lineX = fullW*(1-priorities[p]);
+      if(RIGHT_SIDE[p]){
+        display.rect(lineX,0,appW-lineX,30);
+      }else{
+        display.rect(0,0,lineX,30);
+      }
       
       display.textAlign(RIGHT);
       display.textSize(16);

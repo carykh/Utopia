@@ -2,10 +2,11 @@ class Map{
   float[][] elev;
   Tile[][] tiles;
   int[][][] closestWater;
+  boolean[][][] visible;
   int N;
-  float ELEV_FACTOR = 5;
+  float ELEV_FACTOR = 10;
   float WATER_DEEP = 20; // creatures can "drink" water only if it's this deep.
-  float WATER_LEVEL = 230;
+  float WATER_LEVEL = 2.44*T;
   float WAVE_SIZE = 10;
   float WAVE_PERIOD = 100;
   
@@ -15,6 +16,7 @@ class Map{
     elev = new float[N][N];
     tiles = new Tile[N][N];
     closestWater = new int[N][N][2];
+    visible = new boolean[N][N][2]; // ground level, water level
     float maxElev = -9999;
     float minElev = 9999;
     for(int x = 0; x < N; x++){
@@ -57,7 +59,7 @@ class Map{
     return here;
   }
   float getNoiseAt(float x, float y, int N, float smooth){
-    float NR = 0.15;
+    float NR = 0.1;
     float[][] noi = {{noise(x*NR,y*NR), noise(x*NR,(y-N)*NR)},{noise((x-N)*NR,y*NR), noise((x-N)*NR,(y-N)*NR)}};
     float x_lerp = min(max((x-(N-smooth))/smooth,0),1);
     float y_lerp = min(max((y-(N-smooth))/smooth,0),1);
@@ -93,52 +95,88 @@ class Map{
     return WATER_LEVEL+sin(cycle_offset+ticks*2*PI/WAVE_PERIOD)*WAVE_SIZE;
   }
   
+  boolean getVis(float x, float y, float[][] arr, PGraphics g){
+    float[][] screenXY = {
+    {g.screenX(0,0,arr[0][0]), g.screenY(0,0,arr[0][0])},
+    {g.screenX(0,T,arr[0][1]), g.screenY(0,T,arr[0][1])},
+    {g.screenX(T,0,arr[1][0]), g.screenY(T,0,arr[1][0])},
+    {g.screenX(T,T,arr[1][1]), g.screenY(T,T,arr[1][1])}};
+    
+    boolean[] all_to_one_side = {true,true,true,true};
+    for(int p = 0; p < 4; p++){
+      if(screenXY[p][0] < g.width){
+        all_to_one_side[0] = false;
+      }
+      if(screenXY[p][0] >= 0){
+        all_to_one_side[1] = false;
+      }
+      if(screenXY[p][1] < g.height){
+        all_to_one_side[2] = false;
+      }
+      if(screenXY[p][1] >= 0){
+        all_to_one_side[3] = false;
+      }
+    }
+    for(int p = 0; p < 4; p++){
+      if(all_to_one_side[p]){
+        return false;
+      }
+    }
+    return true;
+  }
+  
   void drawMap(){
     for(int x = 0; x < N; x++){
       for(int y = 0; y < N; y++){
         int x2 = (x+1)%N;
         int y2 = (y+1)%N;
         
-        float elev_00 = T*elev[x][y];
-        float elev_01 = T*elev[x][y2];
-        float elev_11 = T*elev[x2][y2];
-        float elev_10 = T*elev[x2][y];
+        float[][] g_elev = {{T*elev[x][y], T*elev[x][y2]}, {T*elev[x2][y], T*elev[x2][y2]}};
         
-        float water_00 = getWaterLevel(x,y);
-        float water_01 = getWaterLevel(x,y2);
-        float water_10 = getWaterLevel(x2,y);
-        float water_11 = getWaterLevel(x2,y2);
+        float[][] w_elev = {{getWaterLevel(x,y),getWaterLevel(x,y2)}, {getWaterLevel(x2,y),getWaterLevel(x2,y2)}};
         
         g.pushMatrix();
         g.translate(unloop_two(x*T,camera[0]),unloop_two(y*T,camera[1]));
-        g.beginShape();
-        g.fill(getColorAt(x,y));
-        g.vertex(0,0,elev_00);
-        g.fill(getColorAt(x,y2));
-        g.vertex(0,T,elev_01);
-        g.fill(getColorAt(x2,y2));
-        g.vertex(T,T,elev_11);
-        g.fill(getColorAt(x2,y));
-        g.vertex(T,0,elev_10);
-        g.endShape(CLOSE);
         
-        if(elev_00 <= water_00 || elev_01 <= water_01 || elev_10 <= water_10 || elev_11 <= water_11){
+        visible[x][y][0] = getVis(x,y,g_elev,g);
+        visible[x][y][1] = getVis(x,y,w_elev,g);
+        
+        if(visible[x][y][0]){
+          g.beginShape();
+          g.fill(getColorAt(x,y));
+          g.vertex(0,0,g_elev[0][0]);
+          g.fill(getColorAt(x,y2));
+          g.vertex(0,T,g_elev[0][1]);
+          g.fill(getColorAt(x2,y2));
+          g.vertex(T,T,g_elev[1][1]);
+          g.fill(getColorAt(x2,y));
+          g.vertex(T,0,g_elev[1][0]);
+          g.endShape(CLOSE);
+        }
+        
+        if(visible[x][y][1] &&
+        (g_elev[0][0] <= w_elev[0][0] || g_elev[0][1] <= w_elev[0][1]
+        || g_elev[1][0] <= w_elev[1][0] || g_elev[1][1] <= w_elev[1][1])){
           
           g.beginShape();
           g.fill(getWaterColorAt(x,y));
-          g.vertex(0,0,water_00);
+          g.vertex(0,0,w_elev[0][0]);
           g.fill(getWaterColorAt(x,y2));
-          g.vertex(0,T,water_01);
+          g.vertex(0,T,w_elev[0][1]);
           g.fill(getWaterColorAt(x2,y2));
-          g.vertex(T,T,water_11);
+          g.vertex(T,T,w_elev[1][1]);
           g.fill(getWaterColorAt(x2,y));
-          g.vertex(T,0,water_10);
+          g.vertex(T,0,w_elev[1][0]);
           g.endShape(CLOSE);
         }
         
         g.popMatrix();
       }
     }
+  }
+  float getGroundLevel(float x, float y){
+    float[] coor = {unloop_arr(x),unloop_arr(y)};
+    return getGroundLevel(coor);
   }
   float getGroundLevel(float[] coor){
     float x_val = min(max(coor[0]/T,0),SIZE-EPS);

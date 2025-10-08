@@ -6,20 +6,23 @@ class Player{
   
   float FRICTION = 0.85;
   float ACCEL = 2;
+  float WANDER_ACCEL = 1;
   float R_ACCEL = 0.05;
   float THICKNESS = 11;
   float EPS = 0.1;
-  boolean accelerating = false;
+  float walk_speed = -1.0;
   boolean toDie = false;
   int species;
   int topPriority = -1;
-  boolean[] animalKeyPresses = {false,false,false,false,false,false,false};
+  boolean[] animalKeyPresses = {false,false,false,false,false,false,false,false};
   boolean plant_landed = false;
+  int wander_action = -1;
   
   int tick_bucket = 0; // creatures don't search for targets EVERY frame, only every 10 frames or so. This staggers them.
   
   Player predator = null;
   Player target = null;
+  Player recentChild = null;
   
   Trait trait; 
 
@@ -127,6 +130,9 @@ class Player{
     return result;
   }
   void drawPlayer(){
+    if(!mapVisible(coor)){
+      return;
+    }
     g.noStroke();
     g.pushMatrix();
     g.translate(unloop_two(coor[0],camera[0]),unloop_two(coor[1],camera[1]),coor[2]);
@@ -134,10 +140,41 @@ class Player{
     drawBody();
     g.popMatrix();
     
+    if(this == closest_AI && followSpecimen &&
+    (topPriority == 0 || topPriority == 1 || topPriority == 2 || topPriority == 6)){
+      drawVisibilityRing();
+    }
     if(this != closest_AI || topPriority == 3 || target == null){
       return;
     }
     drawArrow(target.coor, (topPriority == 4));
+  }
+  void drawVisibilityRing(){
+    int P = 40;
+    float WALL = 100;
+    for(int p = 0; p < P; p++){
+      if(p%2 == (ticks/10)%2){
+        continue;
+      }
+      float ang1 = p*2*PI/P;
+      float ang2 = (p+1)*2*PI/P;
+      float c_x = unloop_two(coor[0],camera[0]);
+      float c_y = unloop_two(coor[1],camera[1]);
+      
+      float x1 = c_x+cos(ang1)*VISION_DISTANCE;
+      float y1 = c_y+sin(ang1)*VISION_DISTANCE;
+      float z1 = map.getGroundLevel(x1,y1);
+      float x2 = c_x+cos(ang2)*VISION_DISTANCE;
+      float y2 = c_y+sin(ang2)*VISION_DISTANCE;
+      float z2 = map.getGroundLevel(x2,y2);
+      g.fill(255,255,0);
+      g.beginShape();
+      g.vertex(x1,y1,z1+WALL);
+      g.vertex(x2,y2,z2+WALL);
+      g.vertex(x2,y2,z2-WALL);
+      g.vertex(x1,y1,z1-WALL);
+      g.endShape();
+    }
   }
   void drawArrow(float[] c, boolean fleeing){
     float z_base = max(c[2], map.getWaterLevel(c[0],c[1]));
@@ -227,6 +264,9 @@ class Player{
     }
     g.sphere(WIDTHS[1]*0.65);
     g.fill(SPECIES_COLORS[species]);
+    if(!edible()){
+      g.fill(inedibilize(SPECIES_COLORS[species]));
+    }
     for(int p = 0; p < 5; p++){
       g.pushMatrix();
       g.rotateZ(2*PI*p/5.0);
@@ -247,9 +287,9 @@ class Player{
   }
   
   void drawStickFigure(){
-    float walk_swing = sin(millis()*0.04);
-    float walk_swing2 = sin(millis()*0.052);
-    float idle_swing = sin(millis()*0.003);
+    float walk_swing = sin(millis()*0.04*walk_speed);
+    float walk_swing2 = sin(millis()*0.052*walk_speed);
+    float idle_swing = sin(millis()*0.003*walk_speed);
     boolean inAir = (coor[2] > map.getGroundLevel(coor));
     if(inAir){
       walk_swing = 0;
@@ -258,39 +298,31 @@ class Player{
     }
     float SCALE_Y = 10;
     float SCALE_Z = 10;
-    if(accelerating){
+    if(walk_speed >= 0.001){
       SCALE_Z = 10+walk_swing2;
     }else{
       SCALE_Z = 10+0.26*idle_swing;
     }
     float limbW = 3;
     color limbColor = color(50,50,50);
-    // enable this for colored limbs
-    /*if(getSpeciesType(species) == 1){
-      limbColor = SPECIES_COLORS[species];
-    }*/
     drawLimbs(SCALE_Y, SCALE_Z, limbW, inAir, walk_swing, limbColor);
+    
+    
+    color bodyColor;
+    
     if(species == -1){
-      g.fill(160,160,160);
+      bodyColor = color(160,160,160);
     }else{
-      g.fill(SPECIES_COLORS[species]);
+      bodyColor = SPECIES_COLORS[species];
       if(this == closest_AI){
         trait.drawDisplay();
-        g.fill(colorLerp(SPECIES_COLORS[species], color(255,255,255),0.5+0.5*sin(frameCount)));
+        bodyColor = colorLerp(SPECIES_COLORS[species], color(255,255,255),0.5+0.5*sin(frameCount));
       }
     }
-    
-    if(getSpeciesType(species) == 1){ // herbivore body
-      float meat = (2*trait.priorities[0]+0.05)*SCALE_Y;
-      g.pushMatrix();
-      g.translate(-2*SCALE_Y,0,2*SCALE_Y);
-      g.box(4*SCALE_Y+limbW+meat*0.2,meat,meat);
-      g.popMatrix();
-    }
-    
+    g.fill(bodyColor);
     
     float HEAD_R = 20;
-    float BODY_HEIGHT = (species == -1 || species == 4) ? 4 : 2; 
+    float BODY_HEIGHT = ((getSpeciesType(species)+1)%3 == 0) ? 4 : 2; 
     g.pushMatrix();
     g.translate(0,0,BODY_HEIGHT*SCALE_Z+HEAD_R);
     g.sphere(HEAD_R);
@@ -308,8 +340,25 @@ class Player{
     boolean awake = (topPriority != 3);
     drawFace(HEAD_R, 2, awake);
     g.popMatrix();
+    
+    if(getSpeciesType(species) == 1){ // herbivore body
+      if(edible()){
+        g.fill(bodyColor);
+      }else{
+        g.fill(inedibilize(bodyColor));
+      }
+      float meat = (2*trait.priorities[0]+0.05)*SCALE_Y;
+      g.pushMatrix();
+      g.translate(-2*SCALE_Y,0,2*SCALE_Y);
+      g.box(4*SCALE_Y+limbW+meat*0.2,meat,meat);
+      g.popMatrix();
+    }
+    
   }
   
+  color inedibilize(color c){
+    return color(190,190,190);
+  }
   void drawLimbs(float SCALE_Y, float SCALE_Z, float W, boolean inAir, float walk_swing, color c){
     float[][][] bodies = {
       {{0,0,4,0,0,2},{0,0,4,0,-1,2},{0,0,4,0,1,2},{0,0,2,0,1,0},{0,0,2,0,-1,0}},
@@ -325,7 +374,7 @@ class Player{
       g.beginShape();
       float dangleX = 0;
       
-      if(i >= 1 && accelerating){
+      if(i >= 1 && walk_speed >= 0.001){
         dangleX = walk_swing;
       }
       float flyMulti = 1.0;
@@ -414,7 +463,7 @@ class Player{
   
   boolean isAgentDoingAction(int n){
     if(species == -1){
-      return keyHandler.keysDown[n];
+      return keyHandler.keysToAction(n);
     }
     return animalKeyPresses[n];
   }
@@ -428,6 +477,8 @@ class Player{
       target = findTarget(0);
     }else if(topPriority == 4){ // bro is fleeing (predator was already found during priority picking)
       target = predator;
+    }else if(topPriority == 5){ // bro is going towards recent child
+      target = recentChild;
     }
   }
   
@@ -445,11 +496,14 @@ class Player{
       animalKeyPresses[i] = false;
     }
     if(target == null){
+      if(topPriority <= 2){ // bro is hungry, thirsty, or freaky, but couldn't find a target. It's time to "wander".
+        animalKeyPresses[7] = true; // wander
+      }
       return;
     }
     // don't forget to do play-time if the target is null.
     
-    if(topPriority <= 2){ // bro is hungry, thirsty, or freaky.  How do you run towards prey/water/mate?
+    if(topPriority <= 2 || topPriority == 5){ // bro is hungry, thirsty, freaky, or caretaking.  How do you run towards prey/water/mate/child?
       float dx = unloop(target.getSoonCoor(0)-getSoonCoor(0));
       float dy = unloop(target.getSoonCoor(1)-getSoonCoor(1));
       float distance = dist(0,0,dx,dy);
@@ -495,15 +549,33 @@ class Player{
     }
   }
   
+  boolean isExertingMotion(){
+    // true if WASD is being pressed.
+    for(int i = 0; i < 5; i++){
+      if(isAgentDoingAction(i)){
+        return true;
+      }
+    }
+    return false;
+  }
+  
   void doPriorities(){
-    for(int i = 0; i < 3; i++){
+    for(int i = 0; i < PRIORITY_NAMES.length; i++){
       float drainRate = PRIORITY_RATES[species][i]*0.00003;
+      if(drainRate == 0){
+        continue;
+      }
+      // your freaky increase rate is FASTER if you're full. (not hungry).
+      // If you are urgently hungry, it increases at a rate of 20% of normal.
       if(i == 2){
         drainRate *= 0.2+0.8*trait.priorities[0];
-        // your freaky increase rate is FASTER if you're full. (not hungry).
-        // If you are urgently hungry, it increases at a rate of 20% of normal.
       }
-      trait.priorities[i] = max(trait.priorities[i]-drainRate,PRIORITY_CAPS[i]);
+      // if the creature isn't running fast,
+      // then its hunger only increases at 1/3 the rate it normally does.
+      if(i == 0 && !isExertingMotion()){
+        drainRate *= 0.3333;
+      }
+      trait.priorities[i] = min(max(trait.priorities[i]-drainRate,PRIORITY_CAPS[i]),1.0);
       if(trait.priorities[i] <= 0 && i < 2){ // hungry or thirsty to death
         die(true);
       }
@@ -517,8 +589,8 @@ class Player{
       }else{
         float dx = unloop(coor[0]-predator.coor[0])/T;
         float dy = unloop(coor[1]-predator.coor[1])/T;
-        trait.priorities[4] = min(max((dist(0,0,dx,dy)-0.5)/1.8,0),1);
-        // at predator distance 0.5 tile, urgency is 100%. At distance 2.3, urgency is at 0%.
+        trait.priorities[4] = min(max((dist(0,0,dx,dy)-1)/3.5,0),1);
+        // at predator distance 1.0 tile, urgency is 100%. At distance 4.5, urgency is at 0%.
       }
     }
     
@@ -534,7 +606,7 @@ class Player{
   
   Player findTarget(int targetType){  // What is the target type? 0: your own species, 1: species you can eat, and 2: species that eat you
     Player recordHolder = null;
-    float distanceRecord = 99999999;
+    float distanceRecord = VISION_DISTANCE;
     for(int i = 0; i < players.size(); i++){
       Player other = players.get(i);
       if(species <= -1 || other.species <= -1 || other == this){
@@ -545,7 +617,7 @@ class Player{
       (targetType == 2 && !IS_FOOD[other.species][species])){
         continue;
       }
-      if(getSpeciesType(other.species) == 0 && !other.onGround()){ // don't chase after seeds
+      if(targetType == 1 && !other.edible()){ // when finding food, do NOT eat life that isn't edible.
         continue;
       }
       float distance = d_loop(coor,other.coor,false);
@@ -556,6 +628,15 @@ class Player{
     }
     return recordHolder;
   }
+  
+  boolean edible(){
+    if(getSpeciesType(species) == 0){
+      return (trait.size >= 0.25 && trait.size <= 0.75);
+    }else{
+      return (trait.priorities[0] >= 0.25 && trait.priorities[0] <= 0.75);
+    }
+  }
+  
   Player findWater(){
     int ix = (int)unloop(coor[0]/T+0.5);
     int iy = (int)unloop(coor[1]/T+0.5);
@@ -573,10 +654,14 @@ class Player{
       doPriorities();
     }
     float r = coor[3];
-    accelerating = false;
+    walk_speed = -1.0;
     for(int i = 0; i < ACTION_COUNT; i++){
-      if(isAgentDoingAction(i)){
-        accelerating = true;
+      if(i == 7){
+        if(isAgentDoingAction(i) && wander_action >= 1){
+          walk_speed = 0.3;
+        }
+      }else if(isAgentDoingAction(i)){
+        walk_speed = 1.0;
       }
     }
     float s = (species <= -1) ? 1.0 : SPECIES_SPEED[species];
@@ -602,6 +687,22 @@ class Player{
       velo[0] += sin(r)*ACCEL*s*HUNGER_MULT;
       velo[1] -= cos(r)*ACCEL*s*HUNGER_MULT;
     }
+    
+    
+    if(isAgentDoingAction(7)){ // wander
+      if(ticks%TICK_BUCKET_COUNT == tick_bucket){
+        wander_action = (int)random(0,4); // 0: still, 1: walk forward, 2: turn left, 3: turn right
+      }
+      if(wander_action == 1){
+        velo[0] += cos(r)*WANDER_ACCEL*s*HUNGER_MULT;
+        velo[1] += sin(r)*WANDER_ACCEL*s*HUNGER_MULT;
+      }else if(wander_action == 2){
+        coor[3] -= ACCEL*0.05;
+      }else if(wander_action == 3){
+        coor[3] += ACCEL*0.05;
+      }
+    }
+    
     if(isAgentDoingAction(4) && coor[2] <= map.getGroundLevel(coor) && velo[2] <= 1){
       velo[2] = 18;
       pawd(5, 0.1);
@@ -632,14 +733,15 @@ class Player{
     if(!onGround()){
       return;
     }
-    float[] IDEAL_HEIGHTS = {380,720};
-    float elev = min(map.getGroundLevel(coor),770); // i put this 770 cap because I don't want ice flowers to be penalized for growing TOO high. 
+    
+    float[] IDEAL_HEIGHTS = {0.39,0.73};
+    float elev = min(map.getGroundLevel(coor)/T/map.ELEV_FACTOR,0.78); // i put this 770 cap because I don't want ice flowers to be penalized for growing TOO high. 
     float offby = abs(elev-IDEAL_HEIGHTS[species]);
-    float elev_factor = 0.05+0.95*pow(min(max(1-offby/200,0),1),1.6);
+    float elev_factor = 0.05+0.95*pow(min(max(1-offby/0.25,0),1),1.6);
     
     float overp_factor = max(0.0,1.0-(getCurrentTile().occupants.size())/MAX_PER_TILE);
-    float growth_speed = 0.01+elev_factor*daylight()*overp_factor;
-    trait.size += growth_speed*random(0.001,0.002)*PLANT_GROWTH_SPEED;
+    float growth_speed = 0.01+elev_factor*overp_factor*daylight(); // commented out to allow plants to grow at night, too.
+    trait.size += growth_speed*random(0.001,0.002)*PRIORITY_RATES[species][0];
     if(trait.size >= 1){ // make seeds
       trait.size -= 0.5;
       Player newPlayer = new Player(species, coor, true, false, 0.5, 0.5, trait.generation+1, trait.name);
@@ -651,7 +753,7 @@ class Player{
   void doPhysics(Map map){
     prevCoor = deepCopy(coor);
     
-    if(species == 0 || species == 1){
+    if(getSpeciesType(species) == 0){
       plantPhysics();
     }
     
@@ -700,9 +802,9 @@ class Player{
       velo[2] -= 1; // gravity
     }
     if(topPriority == 0 && target != null && !target.toDie && species >= 0 && target.species >= 0
-    && IS_FOOD[species][target.species]){ //eat
+    && IS_FOOD[species][target.species] && target.edible()){ //eat
       float _dist = dist(coor[0],coor[1],coor[2],target.coor[0],target.coor[1],target.coor[2]);
-      if(_dist < T*0.15){ // within eating range
+      if(_dist < COLLISION_DISTANCE){ // within eating range
         target.die(true); // prey is eaten
         float gainedCalories;
         if(getSpeciesType(target.species) == 0){ // plant
@@ -723,12 +825,13 @@ class Player{
     if(topPriority == 2 && target != null &&
     species >= 0 && target.species >= 0 && species == target.species){ // freaky and can mate
       float _dist = dist(coor[0],coor[1],coor[2],target.coor[0],target.coor[1],target.coor[2]);
-      if(_dist < T*0.15){ // within mating rate
+      if(_dist < COLLISION_DISTANCE){ // within mating rate
         // giving birth tires out both parents - hunger is moved 1/3 to death to give to the offspring
         float hungerForOffspring = (trait.priorities[0]+target.trait.priorities[0])/3.0;
         trait.priorities[0] -= trait.priorities[0]/3.0;
         target.trait.priorities[0] -= target.trait.priorities[0]/3.0;
-        
+        trait.priorities[5] = 0.0; // caretaking to the most urgent!
+        target.trait.priorities[5] = 0.0; // caretaking to the most urgent!
         float thirstForOffspring = (trait.priorities[1]+target.trait.priorities[1])/2.0;
         
         // a babby is born!
@@ -736,7 +839,11 @@ class Player{
         Player newPlayer = new Player(species, coor, true, false, hungerForOffspring, thirstForOffspring, trait.generation+1, parents);
         players.add(newPlayer);
         trait.priorities[2] = min(1.0, trait.priorities[2]+0.25); // no need to have another baby any time soon.
+        
         trait.children.add(newPlayer.trait.name);
+        target.trait.children.add(newPlayer.trait.name);
+        recentChild = newPlayer;
+        target.recentChild = newPlayer;
         pawd(13, 0.2);
       }
     }
@@ -765,6 +872,9 @@ class Player{
   void snapCamera(boolean withHeadRotation){
     if(withHeadRotation){
       coor[3] = camera[3];
+    }
+    if(keyHandler.keysDown[10]){
+      camera[3] += 0.01;
     }
     lag(3,camera,coor,0.13);
     float HEIGHT_ABOVE_PLAYER = 50;

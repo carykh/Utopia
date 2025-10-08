@@ -40,6 +40,9 @@ class Gut{
     }
   }
   void drawGut(){
+    if(!mapVisible(location)){
+      return;
+    }
     float size = 1-(float)(ticks-when)/DURATION;
     g.fill(SPECIES_COLORS[species]);
     for(int p = 0; p < PIECES; p++){
