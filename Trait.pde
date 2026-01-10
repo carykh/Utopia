@@ -1,6 +1,6 @@
 class Trait{
   float size;
-  
+
   // hunger, thirst, reprod, flee, play
   float [] priorities;
   PGraphics display;
@@ -14,7 +14,7 @@ class Trait{
   int timeOfLastMeal = -99999;
   ArrayList<String> children;
   Player player;
-  
+
   public Trait(Player p, boolean DETAILED, float startingHunger, float startingThirst){
     player = p;
     size = 0;
@@ -48,16 +48,16 @@ class Trait{
     result += ")";
     return result;
   }
-  
+
   String weightToString(float n){
-    return nf(n*100,0,1)+" lbs";
+    return nf(n*50,0,1)+" kg";
   }
   void drawDisplay(){
     boolean[] RIGHT_SIDE = {true, true, false, false, false, false};
     int[] order = ArrayUtils.argsort(priorities, true);
     display.beginDraw();
     display.background(0);
-    
+
     display.fill(80);
     display.rect(8,0,384,420,25);
     display.fill(255);
@@ -69,20 +69,20 @@ class Trait{
     "Birth weight: "+weightToString(bw),"Weight now: "+weightToString(priorities[0]),
     "Age: "+nf(ticksToDays(ticks-birth_tick),0,2)+" days","Parents: "+parents,
     "Children: "+getChildrenString(),"Meal Count: "+mc};
-    
-    
+
+
     for(int i = 0; i < info.length; i++){
       float y = (i%(info.length/2))*18+60;
       float x = ((i >= info.length/2) ? 205 : 15);
       display.text(info[i],x,y);
     }
-    
+
     for(int i = 0; i < priorities.length; i++){
       int p = order[i];
       display.pushMatrix();
       display.translate(120,150+44*i);
       display.noStroke();
-      
+
       float fullW = 250;
       float appW = (1-PRIORITY_CAPS[p])*fullW;
       if(i == 0){
@@ -98,12 +98,12 @@ class Trait{
       }else{
         display.rect(0,0,lineX,30);
       }
-      
+
       display.textAlign(RIGHT);
       display.textSize(16);
       display.fill(255);
       display.text(PRIORITY_NAMES[p],-5,20);
-      
+
       display.popMatrix();
     }
     display.endDraw();
